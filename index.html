@@ -1,0 +1,1040 @@
+<!--
+  ACOUSTIC MANIFOLD — bioacoustic song visualizer
+  Build: AMX-20261107-1910Z  (prefix AMX provisional, pending confirmation)
+  Shipped (UTC): 2026-11-07T19:10:52Z
+  Adds: frozen/exportable reference basis + log-frequency spectrogram with linked time.
+  Prior: AMX-20260626-2207Z (source directory, mix compare mode).
+  Single-file. No network, no storage. All DSP runs client-side.
+  Inspired by the visual language of @lucioarese's spectral pieces.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acoustic Manifold</title>
+<style>
+  :root{
+    --bg:#000; --ink:#d9d9d9; --mut:#6a6a6a; --faint:#1c1c1c;
+    --line:#262626; --hot:#ff3b30; --accent:#5dc963;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:22px 22px 60px;max-width:1180px;margin:0 auto}
+  .lbl{font-style:italic;letter-spacing:.22em;text-transform:uppercase;
+    font-size:11px;color:var(--ink);font-weight:600}
+  .lbl.sm{font-size:9.5px;letter-spacing:.18em;color:var(--mut);font-weight:500}
+  .mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+
+  header{display:flex;align-items:baseline;justify-content:space-between;
+    flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:18px}
+  header .title{font-style:italic;letter-spacing:.18em;text-transform:uppercase;font-size:18px}
+  header .by{color:var(--mut);font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-style:italic}
+
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  button{background:#0d0d0d;color:var(--ink);border:1px solid #303030;border-radius:2px;
+    padding:8px 14px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;cursor:pointer;
+    font-style:italic;transition:border-color .15s,color .15s}
+  button:hover{border-color:#6a6a6a}
+  button:disabled{opacity:.35;cursor:not-allowed}
+  button.go{border-color:#3a5a3a;color:#bfe6bf}
+  button.go:hover{border-color:var(--accent)}
+  .hint{color:var(--mut);font-size:10px;letter-spacing:.06em}
+
+  #drop{border:1px dashed #2c2c2c;border-radius:3px;padding:14px;text-align:center;
+    color:var(--mut);font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-style:italic;
+    margin-bottom:16px;transition:border-color .15s,color .15s}
+  #drop.over{border-color:var(--accent);color:var(--accent)}
+
+  .files{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;min-height:0}
+  .chip{border:1px solid #2a2a2a;border-radius:2px;padding:6px 10px;font-size:10px;
+    letter-spacing:.04em;cursor:pointer;color:var(--mut);display:flex;gap:8px;align-items:center}
+  .chip.on{border-color:var(--accent);color:var(--ink)}
+  .chip .x{color:#555;font-style:normal}
+  .chip .x:hover{color:var(--hot)}
+
+  .grid{display:grid;grid-template-columns:1fr;gap:26px}
+  @media(min-width:880px){.grid{grid-template-columns:1.35fr 1fr}
+    .manifold{grid-column:1 / -1}}
+  .panel{position:relative}
+  .panel .head{margin-bottom:8px}
+  canvas{display:block;width:100%;background:#000;border:1px solid #141414;border-radius:2px}
+  /* explicit CSS heights: without them the canvas scales its default 300px-wide
+     intrinsic size to full width and renders several times too tall */
+  #cManifold{height:460px} #cSpec{height:230px} #cRadar,#cProfile{height:360px}
+  #cManifold,#cSpec{cursor:crosshair}
+  .spec{grid-column:1 / -1}
+
+  /* basis status */
+  .basis{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:-4px 0 16px}
+  .pill{border:1px solid #2a2a2a;border-radius:2px;padding:6px 10px;font-size:10px;
+    letter-spacing:.06em;color:var(--mut);font-style:italic}
+  .pill.frozen{border-color:#3d6f8f;color:#bfe0f5}
+  .pill.err{border-color:#7a2a2a;color:#f0b0b0}
+  button.ice{border-color:#2f5268;color:#bfe0f5}
+  button.ice:hover{border-color:#6fb6e0}
+
+  .scrub{display:flex;align-items:center;gap:12px;margin:18px 0 4px}
+  input[type=range]{flex:1;accent-color:var(--accent);height:2px}
+  .readout{font-size:10px;letter-spacing:.1em;color:var(--mut);min-width:128px;text-align:right}
+
+  footer{margin-top:34px;border-top:1px solid var(--line);padding-top:12px;
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;
+    color:#3f3f3f;font-size:9px;letter-spacing:.16em;text-transform:uppercase;font-style:italic}
+  .empty{color:var(--mut);font-size:11px;letter-spacing:.1em;padding:50px 0;text-align:center;font-style:italic}
+  .specimen{font-style:italic;letter-spacing:.16em;text-transform:uppercase;font-size:13px;
+    color:var(--ink);margin:30px 0 8px}
+
+  /* source directory */
+  #sources{display:none;border:1px solid var(--line);border-radius:3px;padding:16px 18px;margin-bottom:18px}
+  #sources.open{display:block}
+  .src-cat{font-style:italic;letter-spacing:.18em;text-transform:uppercase;font-size:10px;
+    color:var(--accent);margin:14px 0 6px}
+  .src-cat:first-child{margin-top:0}
+  .src-item{display:block;margin:0 0 7px;font-size:11px;line-height:1.45}
+  .src-item a{color:var(--ink);text-decoration:none;border-bottom:1px solid #333}
+  .src-item a:hover{border-color:var(--accent);color:#fff}
+  .src-item .note{color:var(--mut);font-size:10px}
+  .src-foot{color:#444;font-size:9px;letter-spacing:.06em;margin-top:14px;font-style:italic}
+
+  /* mix legend */
+  #legend{display:none;flex-wrap:wrap;gap:14px;margin:14px 0 2px;align-items:center}
+  #legend.open{display:flex}
+  .leg{display:flex;align-items:center;gap:7px;font-size:10px;letter-spacing:.04em;color:var(--ink)}
+  .leg .sw{width:11px;height:11px;border-radius:2px;flex:none}
+</style>
+
+<header>
+  <div class="title">Acoustic Manifold</div>
+  <div class="by">spectral cartography · drop audio to begin</div>
+</header>
+
+<div class="bar">
+  <button class="go" id="btnDemo">Synthesize demo song</button>
+  <button class="go" id="btnSet">Synthesize demo set</button>
+  <button id="btnPick">Load audio files</button>
+  <button id="btnMode" disabled>▦ Compare (mix)</button>
+  <button id="btnPlay" disabled>▶ Play / sweep</button>
+  <button id="btnSources">⧉ Sources</button>
+  <input id="picker" type="file" accept="audio/*" multiple hidden>
+  <span class="hint">WAV · MP3 · FLAC · OGG — mono mixdown, analyzed in-browser</span>
+</div>
+
+<div class="basis">
+  <button class="ice" id="btnFreeze" disabled>❄ Freeze basis</button>
+  <button id="btnUnfreeze" disabled>Unfreeze</button>
+  <button id="btnExport" disabled>⤓ Export basis</button>
+  <button id="btnImport">⤒ Import basis</button>
+  <input id="basisPicker" type="file" accept=".json,application/json" hidden>
+  <span class="pill" id="basisPill">basis: live — refits as clips change</span>
+</div>
+
+<div id="sources"></div>
+
+<div id="drop">drop one or more recordings here</div>
+<div class="files" id="files"></div>
+
+<div id="stage" class="empty">No recording loaded. Synthesize a demo, or drop a bird / whale recording above.</div>
+
+<div id="content" style="display:none">
+  <div class="specimen" id="specimen">—</div>
+
+  <div id="legend"></div>
+
+  <div class="scrub">
+    <span class="lbl sm">time</span>
+    <input type="range" id="time" min="0" max="100" value="0">
+    <span class="readout mono" id="ro">—</span>
+  </div>
+
+  <div class="grid">
+    <div class="panel manifold">
+      <div class="head lbl">Acoustic manifold</div>
+      <canvas id="cManifold" height="460"></canvas>
+    </div>
+    <div class="panel spec" id="specPanel">
+      <div class="head lbl">Spectrogram</div>
+      <canvas id="cSpec" height="230"></canvas>
+    </div>
+    <div class="panel">
+      <div class="head lbl">Spectral descriptors</div>
+      <canvas id="cRadar" height="360"></canvas>
+    </div>
+    <div class="panel">
+      <div class="head lbl">Centroid–amplitude profile</div>
+      <canvas id="cProfile" height="360"></canvas>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>AMX-20261107-1910Z · provisional prefix</span>
+  <span>shipped 2026-11-07T19:10:52Z UTC</span>
+</footer>
+
+<script>
+/* ───────────────────────── DSP CORE ───────────────────────── */
+const WIN = 2048, BASE_HOP = 512, MAX_FRAMES = 3500;
+const BUILD_ID = 'AMX-20261107-1910Z';
+const SPEC_BANDS = 160, SPEC_FMIN = 40;      // log-spaced spectrogram bands
+const RADAR_KEYS = ['centroid','spread','tonality','crest','entropy','slope','am','fm'];
+const PCA_KEYS   = ['centroid','spread','tonality','crest','entropy','slope','rolloff','flux','rms'];
+
+// iterative radix-2 FFT, in place
+function fft(re, im){
+  const n = re.length;
+  for(let i=1,j=0;i<n;i++){
+    let bit=n>>1;
+    for(;j&bit;bit>>=1) j^=bit;
+    j^=bit;
+    if(i<j){ const tr=re[i];re[i]=re[j];re[j]=tr; const ti=im[i];im[i]=im[j];im[j]=ti; }
+  }
+  for(let len=2;len<=n;len<<=1){
+    const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang);
+    for(let i=0;i<n;i+=len){
+      let cr=1,ci=0;
+      for(let k=0;k<len>>1;k++){
+        const a=i+k, b=a+(len>>1);
+        const xr=re[b]*cr - im[b]*ci;
+        const xi=re[b]*ci + im[b]*cr;
+        re[b]=re[a]-xr; im[b]=im[a]-xi;
+        re[a]+=xr; im[a]+=xi;
+        const ncr=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=ncr;
+      }
+    }
+  }
+}
+
+const hann = new Float32Array(WIN);
+for(let i=0;i<WIN;i++) hann[i]=0.5-0.5*Math.cos(2*Math.PI*i/(WIN-1));
+
+function analyze(samples, sr){
+  const total = samples.length;
+  let hop = BASE_HOP;
+  let nF = Math.floor((total-WIN)/hop)+1;
+  if(nF>MAX_FRAMES){ hop=Math.ceil((total-WIN)/(MAX_FRAMES-1)); nF=Math.floor((total-WIN)/hop)+1; }
+  if(nF<2) return null;
+
+  const half=WIN>>1;
+  const freq=new Float32Array(half);
+  for(let k=0;k<half;k++) freq[k]=k*sr/WIN;
+
+  const F={centroid:[],spread:[],tonality:[],crest:[],entropy:[],slope:[],
+           rolloff:[],flux:[],rms:[],t:[]};
+  let prevMag=null;
+  const re=new Float64Array(WIN), im=new Float64Array(WIN);
+
+  // precompute freq stats for slope regression
+  let fMean=0; for(let k=0;k<half;k++) fMean+=freq[k]; fMean/=half;
+  let fVar=0; for(let k=0;k<half;k++){const d=freq[k]-fMean; fVar+=d*d;} fVar/=half;
+
+  // log-spaced band edges → FFT bin ranges (each band ≥ 1 bin)
+  const SB=SPEC_BANDS, fmax=sr/2;
+  const bandLo=new Int32Array(SB), bandHi=new Int32Array(SB);
+  for(let b=0;b<SB;b++){
+    const f0=SPEC_FMIN*Math.pow(fmax/SPEC_FMIN, b/SB);
+    const f1=SPEC_FMIN*Math.pow(fmax/SPEC_FMIN, (b+1)/SB);
+    const lo=Math.max(1, Math.floor(f0*WIN/sr));
+    bandLo[b]=lo; bandHi[b]=Math.min(half-1, Math.max(lo, Math.ceil(f1*WIN/sr)-1));
+  }
+  const spec=new Float32Array(nF*SB);
+
+  for(let fi=0; fi<nF; fi++){
+    const off=fi*hop;
+    let energy=0;
+    for(let i=0;i<WIN;i++){ const s=samples[off+i]; energy+=s*s; re[i]=s*hann[i]; im[i]=0; }
+    fft(re,im);
+
+    const mag=new Float64Array(half);
+    let sum=0,maxM=0,logsum=0,arith=0;
+    for(let k=0;k<half;k++){
+      const m=Math.hypot(re[k],im[k]);
+      mag[k]=m; sum+=m; arith+=m;
+      if(m>maxM) maxM=m;
+      logsum+=Math.log(m+1e-12);
+    }
+    arith/=half;
+    const eps=1e-9;
+    // centroid & spread
+    let cen=0; for(let k=0;k<half;k++) cen+=freq[k]*mag[k]; cen/= (sum+eps);
+    let spr=0; for(let k=0;k<half;k++){const d=freq[k]-cen; spr+=d*d*mag[k];} spr=Math.sqrt(spr/(sum+eps));
+    // entropy (normalized 0..1)
+    let ent=0; for(let k=0;k<half;k++){const p=mag[k]/(sum+eps); if(p>0) ent-=p*Math.log(p);}
+    ent/=Math.log(half);
+    // flatness -> tonality
+    const geo=Math.exp(logsum/half);
+    const flat=geo/(arith+eps);
+    const ton=1-flat;
+    // crest
+    const crest=maxM/(arith+eps);
+    // slope (regression of mag on freq)
+    let cov=0; for(let k=0;k<half;k++) cov+=(freq[k]-fMean)*(mag[k]-arith);
+    cov/=half; const slope=cov/(fVar+eps);
+    // rolloff 85%
+    let acc=0, roll=freq[half-1]; const thr=0.85*sum;
+    for(let k=0;k<half;k++){ acc+=mag[k]; if(acc>=thr){ roll=freq[k]; break; } }
+    // flux (positive spectral difference, L2)
+    let flux=0;
+    if(prevMag){ for(let k=0;k<half;k++){ const d=mag[k]-prevMag[k]; if(d>0) flux+=d*d; } flux=Math.sqrt(flux); }
+    prevMag=mag;
+
+    // spectrogram row: peak magnitude per log band, in dB
+    for(let b=0;b<SB;b++){
+      let m=0; for(let k=bandLo[b];k<=bandHi[b];k++) if(mag[k]>m) m=mag[k];
+      spec[fi*SB+b]=20*Math.log10(m+1e-9);
+    }
+
+    F.centroid.push(cen); F.spread.push(spr); F.tonality.push(ton);
+    F.crest.push(crest); F.entropy.push(ent); F.slope.push(slope);
+    F.rolloff.push(roll); F.flux.push(flux);
+    F.rms.push(Math.sqrt(energy/WIN));
+    F.t.push(off/sr);
+  }
+
+  // amplitude & frequency modulation = local coefficient of variation
+  const W=Math.max(4, Math.round(0.08*sr/hop));
+  const am=localCV(F.rms,W), fm=localCV(F.centroid,W);
+  F.am=am; F.fm=fm;
+
+  // ── radar: min-max normalize 8 descriptors per clip ──
+  const radar = RADAR_KEYS.map(k=>normArr(F[k]));
+
+  // ── manifold: z-score feature matrix → PCA(2) ──
+  const X = zmatrix(PCA_KEYS.map(k=>F[k]));      // nF rows × k cols
+  const proj = pca2(X);                          // nF × 2
+
+  return {F, nF, hop, sr, radar, proj, spec, SB, fmin:SPEC_FMIN, fmax};
+}
+
+function localCV(arr,W){
+  const n=arr.length, out=new Float64Array(n);
+  for(let i=0;i<n;i++){
+    const a=Math.max(0,i-W), b=Math.min(n,i+W+1);
+    let m=0; for(let j=a;j<b;j++) m+=arr[j]; m/=(b-a);
+    let v=0; for(let j=a;j<b;j++){const d=arr[j]-m; v+=d*d;} v=Math.sqrt(v/(b-a));
+    out[i]=v/(Math.abs(m)+1e-9);
+  }
+  return out;
+}
+function normArr(arr){
+  let mn=Infinity,mx=-Infinity;
+  for(const v of arr){ if(v<mn)mn=v; if(v>mx)mx=v; }
+  const r=mx-mn||1; return arr.map(v=>(v-mn)/r);
+}
+function zmatrix(cols){
+  const k=cols.length, n=cols[0].length;
+  const means=[],stds=[];
+  for(let c=0;c<k;c++){
+    let m=0; for(let i=0;i<n;i++) m+=cols[c][i]; m/=n;
+    let s=0; for(let i=0;i<n;i++){const d=cols[c][i]-m; s+=d*d;} s=Math.sqrt(s/n)||1;
+    means.push(m); stds.push(s);
+  }
+  const X=[];
+  for(let i=0;i<n;i++){ const row=new Float64Array(k);
+    for(let c=0;c<k;c++) row[c]=(cols[c][i]-means[c])/stds[c]; X.push(row); }
+  return X;
+}
+// covariance + power-iteration top-2 eigenvectors, project
+function pca2(X){
+  const n=X.length, k=X[0].length;
+  const C=Array.from({length:k},()=>new Float64Array(k));
+  for(let i=0;i<n;i++){ const r=X[i];
+    for(let a=0;a<k;a++) for(let b=a;b<k;b++) C[a][b]+=r[a]*r[b]; }
+  for(let a=0;a<k;a++) for(let b=a;b<k;b++){ C[a][b]/=n; C[b][a]=C[a][b]; }
+  const v1=powerIter(C,k,null);
+  const C2=deflate(C,k,v1);
+  const v2=powerIter(C2,k,v1);
+  const out=[];
+  for(let i=0;i<n;i++){ let p=0,q=0; const r=X[i];
+    for(let a=0;a<k;a++){ p+=r[a]*v1[a]; q+=r[a]*v2[a]; } out.push([p,q]); }
+  return out;
+}
+function powerIter(C,k,ortho){
+  let v=new Float64Array(k); for(let i=0;i<k;i++) v[i]=Math.sin(i*1.7+0.3);
+  for(let it=0;it<80;it++){
+    const w=new Float64Array(k);
+    for(let a=0;a<k;a++){ let s=0; for(let b=0;b<k;b++) s+=C[a][b]*v[b]; w[a]=s; }
+    if(ortho){ let d=0; for(let a=0;a<k;a++) d+=w[a]*ortho[a];
+      for(let a=0;a<k;a++) w[a]-=d*ortho[a]; }
+    let nrm=0; for(let a=0;a<k;a++) nrm+=w[a]*w[a]; nrm=Math.sqrt(nrm)||1;
+    for(let a=0;a<k;a++) w[a]/=nrm; v=w;
+  }
+  return v;
+}
+function deflate(C,k,v){
+  let lam=0; const Cv=new Float64Array(k);
+  for(let a=0;a<k;a++){ let s=0; for(let b=0;b<k;b++) s+=C[a][b]*v[b]; Cv[a]=s; lam+=v[a]*s; }
+  const C2=Array.from({length:k},()=>new Float64Array(k));
+  for(let a=0;a<k;a++) for(let b=0;b<k;b++) C2[a][b]=C[a][b]-lam*v[a]*v[b];
+  return C2;
+}
+
+/* ───────────────────────── COLOR ───────────────────────── */
+function lerp(a,b,t){return a+(b-a)*t;}
+function stopsRGB(cs,t){
+  t=Math.max(0,Math.min(1,t));
+  const seg=(cs.length-1)*t, i=Math.min(cs.length-2,Math.floor(seg)), f=seg-i;
+  const [r1,g1,b1]=cs[i], [r2,g2,b2]=cs[i+1];
+  return [lerp(r1,r2,f)|0, lerp(g1,g2,f)|0, lerp(b1,b2,f)|0];
+}
+function stops(cs,t){ const [r,g,b]=stopsRGB(cs,t); return `rgb(${r},${g},${b})`; }
+const CENT=[[68,1,84],[59,82,139],[33,144,141],[93,201,99],[253,231,37]]; // viridis-ish
+const FLUX=[[43,80,255],[192,38,211],[255,45,45]];                          // blue→magenta→red
+const INFERNO=[[0,0,4],[40,11,84],[101,21,110],[159,42,99],[212,72,66],[245,125,21],[250,193,39],[252,255,164]];
+const cmapCent=t=>stops(CENT,t), cmapFlux=t=>stops(FLUX,t);
+
+/* ───────────────────────── RENDER ───────────────────────── */
+function dpiCanvas(cv){
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const w=cv.clientWidth, h=cv.clientHeight;
+  cv.width=w*dpr; cv.height=h*dpr;
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); return {g,w,h};
+}
+const SMALLCAP="italic 9px 'Helvetica Neue',Arial,sans-serif";
+let lastMan=null, lastSpec=null;   // last-drawn transforms, for click-to-seek
+
+// extent of a point list, optionally unioned with another extent
+function extentOf(P, base){
+  let xmn=base?base.xmn:Infinity, xmx=base?base.xmx:-Infinity,
+      ymn=base?base.ymn:Infinity, ymx=base?base.ymx:-Infinity;
+  for(const[p,q]of P){ if(p<xmn)xmn=p; if(p>xmx)xmx=p; if(q<ymn)ymn=q; if(q>ymx)ymx=q; }
+  return {xmn,xmx,ymn,ymx};
+}
+// reference cloud of a frozen basis, drawn as faint context behind the data
+function drawGhost(g, B, sx, sy){
+  g.fillStyle="rgba(140,170,190,0.22)";
+  for(const [x,y] of B.ghost) g.fillRect(sx(x)-0.9, sy(y)-0.9, 1.8, 1.8);
+  const e=B.extent;
+  g.setLineDash([3,4]); g.strokeStyle="rgba(111,182,224,0.35)"; g.lineWidth=1;
+  g.strokeRect(sx(e.xmn), sy(e.ymx), sx(e.xmx)-sx(e.xmn), sy(e.ymn)-sy(e.ymx));
+  g.setLineDash([]);
+}
+
+function drawManifold(cv, f, cur){
+  const A=f.A;
+  const {g,w,h}=dpiCanvas(cv);
+  g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  // frozen basis → stable coordinates shared with the reference set; otherwise the clip's own PCA
+  const P = frozen ? frozenProj(f) : A.proj, cen=A.F.centroid, rms=A.F.rms;
+  const {xmn,xmx,ymn,ymx}=extentOf(P, frozen?frozen.extent:null);
+  const pad=46;
+  const sx=v=>pad+((v-xmn)/((xmx-xmn)||1))*(w-2*pad);
+  const sy=v=>h-pad-((v-ymn)/((ymx-ymn)||1))*(h-2*pad);
+  lastMan={P,sx,sy};
+  let cmx=0; for(const c of cen) if(c>cmx)cmx=c;
+  let rmx=0; for(const r of rms) if(r>rmx)rmx=r;
+  if(frozen){ drawGhost(g, frozen, sx, sy);
+    g.fillStyle="#5d8aa6"; g.font=SMALLCAP; g.textAlign="right";
+    g.fillText("FROZEN BASIS · GREY CLOUD = REFERENCE SET", w-14, 22); }
+
+  // temporal threads
+  g.lineWidth=0.5; g.strokeStyle="rgba(150,150,150,0.16)";
+  g.beginPath();
+  for(let i=0;i<P.length;i++){ const x=sx(P[i][0]),y=sy(P[i][1]); i?g.lineTo(x,y):g.moveTo(x,y); }
+  g.stroke();
+
+  // points as crosses
+  for(let i=0;i<P.length;i++){
+    const x=sx(P[i][0]),y=sy(P[i][1]);
+    const col=cmapCent(cen[i]/(cmx||1));
+    const sz=1.4+3.4*(rms[i]/(rmx||1));
+    g.strokeStyle=col; g.lineWidth=1;
+    g.beginPath(); g.moveTo(x-sz,y); g.lineTo(x+sz,y); g.moveTo(x,y-sz); g.lineTo(x,y+sz); g.stroke();
+  }
+  // current frame halo
+  const cx=sx(P[cur][0]), cy=sy(P[cur][1]);
+  g.strokeStyle="#fff"; g.lineWidth=1.2; g.beginPath(); g.arc(cx,cy,6,0,7); g.stroke();
+
+  // centroid colorbar (left)
+  const bx=14, by=40, bw=8, bh=h-90;
+  for(let i=0;i<bh;i++){ g.fillStyle=cmapCent(1-i/bh); g.fillRect(bx,by+i,bw,1); }
+  g.fillStyle="#888"; g.font=SMALLCAP; g.textAlign="left";
+  g.fillText((cmx/1000).toFixed(1)+" kHz", bx+bw+5, by+6);
+  g.fillText("0.0 kHz", bx+bw+5, by+bh);
+  g.save(); g.translate(bx-3, by+bh/2); g.rotate(-Math.PI/2);
+  g.textAlign="center"; g.fillStyle="#666"; g.fillText("SPECTRAL CENTROID",0,0); g.restore();
+}
+
+function drawRadar(cv, A, cur){
+  const {g,w,h}=dpiCanvas(cv);
+  g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  const cx=w/2, cy=h/2+6, R=Math.min(w,h)/2-44;
+  const labels=["SPECTRAL CENTROID","SPECTRAL SPREAD","TONALITY","SPECTRAL CREST",
+                "SPECTRAL ENTROPY","SPECTRAL SLOPE","AMPLITUDE MOD.","FREQUENCY MOD."];
+  // order axes so centroid is at top, going clockwise
+  const order=[0,1,2,3,4,5,6,7];
+  const N=8;
+  const ang=i=>-Math.PI/2 + (i/N)*2*Math.PI;
+  // web
+  g.strokeStyle="#1f1f1f"; g.lineWidth=1;
+  for(let ring=1;ring<=4;ring++){ const rr=R*ring/4; g.beginPath();
+    for(let i=0;i<=N;i++){ const a=ang(i), x=cx+rr*Math.cos(a), y=cy+rr*Math.sin(a); i?g.lineTo(x,y):g.moveTo(x,y); }
+    g.stroke(); }
+  for(let i=0;i<N;i++){ const a=ang(i);
+    g.beginPath(); g.moveTo(cx,cy); g.lineTo(cx+R*Math.cos(a),cy+R*Math.sin(a)); g.stroke(); }
+  // labels
+  g.fillStyle="#7a7a7a"; g.font=SMALLCAP;
+  for(let i=0;i<N;i++){ const a=ang(i), x=cx+(R+14)*Math.cos(a), y=cy+(R+14)*Math.sin(a);
+    g.textAlign = Math.abs(Math.cos(a))<0.3?"center":(Math.cos(a)>0?"left":"right");
+    g.textBaseline="middle"; g.fillText(labels[order[i]], x, y); }
+
+  // average profile (faint)
+  const poly=(vals,stroke,fill)=>{
+    g.beginPath();
+    for(let i=0;i<N;i++){ const v=vals[order[i]], a=ang(i);
+      const x=cx+R*v*Math.cos(a), y=cy+R*v*Math.sin(a); i?g.lineTo(x,y):g.moveTo(x,y); }
+    g.closePath();
+    if(fill){ g.fillStyle=fill; g.fill(); }
+    g.strokeStyle=stroke; g.lineWidth=1.4; g.stroke();
+  };
+  const avg=A.radar.map(col=>col.reduce((s,v)=>s+v,0)/col.length);
+  poly(avg, "rgba(120,120,120,0.5)", null);
+  const now=A.radar.map(col=>col[cur]);
+  poly(now, "rgba(214,40,176,0.95)", "rgba(214,40,176,0.28)");
+}
+
+function drawProfile(cv, A, cur){
+  const {g,w,h}=dpiCanvas(cv);
+  g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  const cen=A.F.centroid, rms=A.F.rms, flux=A.F.flux;
+  const pad=46;
+  let cmx=0; for(const c of cen) if(c>cmx)cmx=c;
+  let rmx=0; for(const r of rms) if(r>rmx)rmx=r;
+  let fmx=0; for(const f of flux) if(f>fmx)fmx=f;
+  const sx=v=>pad+(v/(cmx||1))*(w-2*pad-14);
+  const sy=v=>h-pad-(v/(rmx||1))*(h-2*pad);
+  // axes
+  g.strokeStyle="#222"; g.lineWidth=1;
+  g.beginPath(); g.moveTo(pad,pad-18); g.lineTo(pad,h-pad); g.lineTo(w-14,h-pad); g.stroke();
+  g.fillStyle="#666"; g.font=SMALLCAP; g.textAlign="center";
+  g.fillText("SPECTRAL CENTROID", (w)/2, h-pad+18);
+  g.save(); g.translate(pad-16,h/2); g.rotate(-Math.PI/2); g.fillText("AMPLITUDE",0,0); g.restore();
+  // x ticks
+  for(let t=0;t<=6;t++){ const fk=cmx*t/6; const x=sx(fk);
+    g.fillStyle="#555"; g.textAlign="center"; g.fillText((fk/1000).toFixed(1)+"k", x, h-pad+9); }
+  // points
+  for(let i=0;i<cen.length;i++){
+    g.fillStyle=cmapFlux(flux[i]/(fmx||1));
+    g.globalAlpha=0.8;
+    g.fillRect(sx(cen[i])-1, sy(rms[i])-1, 2, 2);
+  }
+  g.globalAlpha=1;
+  // current
+  g.strokeStyle="#fff"; g.lineWidth=1; g.beginPath(); g.rect(sx(cen[cur])-3, sy(rms[cur])-3,6,6); g.stroke();
+  // flux colorbar
+  const bx=w-100, by=14, bw=86, bh=6;
+  for(let i=0;i<bw;i++){ g.fillStyle=cmapFlux(i/bw); g.fillRect(bx+i,by,1,bh); }
+  g.fillStyle="#777"; g.font=SMALLCAP; g.textAlign="left"; g.fillText("SPECTRAL FLUX", bx, by-4);
+}
+
+/* ───────────────────────── SPECTROGRAM ───────────────────────── */
+const SPEC_RANGE_DB = 70;   // dynamic range shown below each clip's peak
+
+// render the clip's band spectrum once into an offscreen image, cached on the clip
+function specImage(f){
+  if(f._specImg) return f._specImg;
+  const A=f.A, SB=A.SB, nF=A.nF, S=A.spec;
+  let mx=-Infinity; for(let i=0;i<S.length;i++) if(S[i]>mx) mx=S[i];
+  const floor=mx-SPEC_RANGE_DB;
+  const c=document.createElement('canvas'); c.width=nF; c.height=SB;
+  const g=c.getContext('2d'), img=g.createImageData(nF,SB), d=img.data;
+  for(let i=0;i<nF;i++) for(let b=0;b<SB;b++){
+    const [r,gg,bb]=stopsRGB(INFERNO, (S[i*SB+b]-floor)/SPEC_RANGE_DB);
+    const o=((SB-1-b)*nF+i)*4;              // low frequencies at the bottom
+    d[o]=r; d[o+1]=gg; d[o+2]=bb; d[o+3]=255;
+  }
+  g.putImageData(img,0,0);
+  return (f._specImg=c);
+}
+
+function drawSpectrogram(cv, f, cur){
+  const A=f.A, {g,w,h}=dpiCanvas(cv);
+  g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  const padL=46, padR=14, padT=18, padB=24, pw=w-padL-padR, ph=h-padT-padB;
+  g.imageSmoothingEnabled=true;
+  g.drawImage(specImage(f), 0,0,A.nF,A.SB, padL,padT,pw,ph);
+  const lr=Math.log(A.fmax/A.fmin);
+  const fy=fr=>padT+ph*(1-Math.log(Math.max(A.fmin,fr)/A.fmin)/lr);
+  const tx=i=>padL+(i/(A.nF-1))*pw;
+  lastSpec={padL,pw,nF:A.nF};
+  // log-frequency ticks
+  g.font=SMALLCAP; g.fillStyle="#666"; g.textAlign="right"; g.textBaseline="middle";
+  for(const fr of [50,100,200,500,1000,2000,5000,10000,20000]){
+    if(fr<A.fmin||fr>A.fmax) continue;
+    const y=fy(fr); g.fillText(fr>=1000?(fr/1000)+"k":String(fr), padL-6, y);
+    g.fillStyle="rgba(255,255,255,0.06)"; g.fillRect(padL,y,pw,1); g.fillStyle="#666";
+  }
+  // time ticks
+  const dur=A.F.t[A.nF-1]; g.textAlign="center"; g.textBaseline="top";
+  const tstep=dur>20?5:dur>8?2:dur>3?1:0.5;
+  for(let s=0;s<=dur+1e-9;s+=tstep) g.fillText(s.toFixed(tstep<1?1:0)+"s", padL+(s/dur)*pw, h-padB+6);
+  // centroid trace — ties this panel to the manifold's colour axis; skipped in near-silence
+  let rmx=0; for(const r of A.F.rms) if(r>rmx) rmx=r;
+  g.strokeStyle="rgba(255,255,255,0.75)"; g.lineWidth=1; g.beginPath(); let pen=false;
+  for(let i=0;i<A.nF;i++){
+    if(A.F.rms[i]<0.05*rmx){ pen=false; continue; }
+    const x=tx(i), y=fy(A.F.centroid[i]);
+    pen ? g.lineTo(x,y) : g.moveTo(x,y); pen=true;
+  }
+  g.stroke();
+  // playhead
+  const x=tx(cur);
+  g.fillStyle="rgba(255,255,255,0.9)"; g.fillRect(x-0.5,padT,1.5,ph);
+  g.fillStyle="#666"; g.textAlign="left"; g.textBaseline="alphabetic";
+  g.fillText("LOG FREQUENCY · WHITE TRACE = SPECTRAL CENTROID · CLICK OR DRAG TO SEEK", padL, 12);
+}
+
+/* ───────────────────────── MIX / COMPARE ───────────────────────── */
+const CLIP_COLORS=[[93,201,99],[255,99,72],[80,150,255],[253,221,60],
+                   [214,90,200],[80,210,210],[255,150,60],[170,130,255]];
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+let sharedExtent=null, sharedProfile=null;
+
+/* ── basis: everything needed to reproduce a projection, in one plain object ──
+   A basis is fit on a set of clips (pooled PCA). "Live" mode refits it whenever
+   the loaded set changes; "frozen" mode keeps one fixed so coordinates are stable
+   across sessions, and it can be exported/imported as JSON. */
+const BASIS_VERSION=1, GHOST_MAX=1500;
+let frozen=null;
+
+function fitBasis(clips){
+  const k=PCA_KEYS.length;
+  let n=0; clips.forEach(f=>n+=f.A.nF);
+  const mean=new Array(k).fill(0), std=new Array(k).fill(0);
+  for(let c=0;c<k;c++){ let m=0;
+    clips.forEach(f=>{ for(const v of f.A.F[PCA_KEYS[c]]) m+=v; }); mean[c]=m/n; }
+  for(let c=0;c<k;c++){ let s=0;
+    clips.forEach(f=>{ for(const v of f.A.F[PCA_KEYS[c]]){ const d=v-mean[c]; s+=d*d; } });
+    std[c]=Math.sqrt(s/n)||1; }
+  // pooled covariance, accumulated row by row
+  const C=Array.from({length:k},()=>new Float64Array(k)), row=new Float64Array(k);
+  clips.forEach(f=>{ for(let i=0;i<f.A.nF;i++){
+    for(let c=0;c<k;c++) row[c]=(f.A.F[PCA_KEYS[c]][i]-mean[c])/std[c];
+    for(let a=0;a<k;a++) for(let b=a;b<k;b++) C[a][b]+=row[a]*row[b]; } });
+  for(let a=0;a<k;a++) for(let b=a;b<k;b++){ C[a][b]/=n; C[b][a]=C[a][b]; }
+  const v1=powerIter(C,k,null), v2=powerIter(deflate(C,k,v1),k,v1);
+  const B={version:BASIS_VERSION, keys:PCA_KEYS.slice(), mean, std,
+           v1:Array.from(v1), v2:Array.from(v2)};
+  // reference extent + a down-sampled ghost cloud for visual context
+  const all=[]; clips.forEach((f,ci)=>projectClip(B,f.A).forEach(p=>all.push([p[0],p[1],ci])));
+  B.extent=extentOf(all,null);
+  const step=Math.max(1, Math.ceil(all.length/GHOST_MAX));
+  B.ghost=[]; for(let i=0;i<all.length;i+=step)
+    B.ghost.push([+all[i][0].toFixed(4), +all[i][1].toFixed(4), all[i][2]]);
+  // radar + profile normalisation ranges, so those panels are fixed too when frozen
+  B.radarRange={};
+  RADAR_KEYS.forEach(key=>{ let mn=Infinity,mx=-Infinity;
+    clips.forEach(f=>{ for(const v of f.A.F[key]){ if(v<mn)mn=v; if(v>mx)mx=v; } });
+    B.radarRange[key]=[mn,mx]; });
+  let cmx=0,rmx=0;
+  clips.forEach(f=>{ for(const v of f.A.F.centroid) if(v>cmx)cmx=v;
+    for(const v of f.A.F.rms) if(v>rmx)rmx=v; });
+  B.prof={cmx,rmx};
+  B.refs=clips.map(f=>f.name);
+  B.created=new Date().toISOString();
+  B.build=BUILD_ID;
+  return B;
+}
+
+function projectClip(B, A){
+  const k=B.keys.length, out=new Array(A.nF);
+  for(let i=0;i<A.nF;i++){ let p=0,q=0;
+    for(let c=0;c<k;c++){ const z=(A.F[B.keys[c]][i]-B.mean[c])/B.std[c]; p+=z*B.v1[c]; q+=z*B.v2[c]; }
+    out[i]=[p,q]; }
+  return out;
+}
+function frozenProj(f){ return f._fz || (f._fz=projectClip(frozen, f.A)); }
+
+// strict shape check for imported JSON — never trust a file's structure
+function validateBasis(B){
+  const k=PCA_KEYS.length, num=v=>typeof v==='number'&&isFinite(v);
+  const vec=a=>Array.isArray(a)&&a.length===k&&a.every(num);
+  if(!B||typeof B!=='object') return "not a JSON object";
+  if(B.version!==BASIS_VERSION) return "unsupported basis version "+B.version;
+  if(!Array.isArray(B.keys)||B.keys.join()!==PCA_KEYS.join()) return "feature keys don't match this build";
+  if(!vec(B.mean)||!vec(B.std)||!vec(B.v1)||!vec(B.v2)) return "malformed projection vectors";
+  if(B.std.some(s=>s<=0)) return "non-positive std";
+  const e=B.extent; if(!e||![e.xmn,e.xmx,e.ymn,e.ymx].every(num)) return "malformed extent";
+  if(!Array.isArray(B.ghost)||B.ghost.some(p=>!Array.isArray(p)||!num(p[0])||!num(p[1]))) return "malformed reference cloud";
+  if(!B.radarRange||RADAR_KEYS.some(key=>!Array.isArray(B.radarRange[key])||B.radarRange[key].length!==2||!B.radarRange[key].every(num))) return "malformed radar ranges";
+  if(!B.prof||!num(B.prof.cmx)||!num(B.prof.rmx)) return "malformed profile ranges";
+  if(!Array.isArray(B.refs)) B.refs=[];
+  B.refs=B.refs.map(r=>String(r));
+  return null;
+}
+
+// project the loaded clips with the frozen basis if there is one, else a live refit
+function computeShared(){
+  const B = frozen || fitBasis(files);
+  files.forEach(f=>{ f.shared = frozen ? frozenProj(f) : projectClip(B,f.A); });
+  let ext = frozen ? frozen.extent : null;
+  files.forEach(f=>{ ext=extentOf(f.shared, ext); });
+  sharedExtent=ext;
+  RADAR_KEYS.forEach(key=>{ const [mn,mx]=B.radarRange[key], r=(mx-mn)||1;
+    files.forEach(f=>{ let s=0; for(const v of f.A.F[key]) s+=Math.max(0,Math.min(1,(v-mn)/r));
+      (f.radarShared=f.radarShared||{})[key]=s/f.A.nF; }); });
+  let {cmx,rmx}=B.prof;   // never hide new data that exceeds the reference range
+  files.forEach(f=>{ for(const v of f.A.F.centroid) if(v>cmx)cmx=v;
+    for(const v of f.A.F.rms) if(v>rmx)rmx=v; });
+  sharedProfile={cmx,rmx};
+}
+
+function drawManifoldCompare(cv){
+  const {g,w,h}=dpiCanvas(cv); g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  const {xmn,xmx,ymn,ymx}=sharedExtent, pad=46;
+  const sx=v=>pad+((v-xmn)/((xmx-xmn)||1))*(w-2*pad);
+  const sy=v=>h-pad-((v-ymn)/((ymx-ymn)||1))*(h-2*pad);
+  lastMan=null;
+  if(frozen) drawGhost(g, frozen, sx, sy);
+  files.forEach((f,fi)=>{ const col=CLIP_COLORS[fi%CLIP_COLORS.length], P=f.shared;
+    g.lineWidth=0.5; g.strokeStyle=rgba(col,0.16); g.beginPath();
+    for(let i=0;i<P.length;i++){ const x=sx(P[i][0]),y=sy(P[i][1]); i?g.lineTo(x,y):g.moveTo(x,y); } g.stroke();
+    g.fillStyle=rgba(col,0.85);
+    for(let i=0;i<P.length;i++){ g.fillRect(sx(P[i][0])-1.1,sy(P[i][1])-1.1,2.4,2.4); }
+  });
+  g.fillStyle=frozen?"#5d8aa6":"#666"; g.font=SMALLCAP; g.textAlign="left";
+  g.fillText(frozen ? "FROZEN BASIS — COORDINATES FIXED · GREY CLOUD = REFERENCE SET"
+                    : "LIVE BASIS — REFITS WHENEVER THE CLIP SET CHANGES", pad, 22);
+}
+
+function drawRadarCompare(cv){
+  const {g,w,h}=dpiCanvas(cv); g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  const cx=w/2, cy=h/2+6, R=Math.min(w,h)/2-44, N=8;
+  const labels=["SPECTRAL CENTROID","SPECTRAL SPREAD","TONALITY","SPECTRAL CREST",
+                "SPECTRAL ENTROPY","SPECTRAL SLOPE","AMPLITUDE MOD.","FREQUENCY MOD."];
+  const ang=i=>-Math.PI/2+(i/N)*2*Math.PI;
+  g.strokeStyle="#1f1f1f"; g.lineWidth=1;
+  for(let ring=1;ring<=4;ring++){ const rr=R*ring/4; g.beginPath();
+    for(let i=0;i<=N;i++){ const a=ang(i); i?g.lineTo(cx+rr*Math.cos(a),cy+rr*Math.sin(a)):g.moveTo(cx+rr*Math.cos(a),cy+rr*Math.sin(a)); } g.stroke(); }
+  for(let i=0;i<N;i++){ const a=ang(i); g.beginPath(); g.moveTo(cx,cy); g.lineTo(cx+R*Math.cos(a),cy+R*Math.sin(a)); g.stroke(); }
+  g.fillStyle="#7a7a7a"; g.font=SMALLCAP;
+  for(let i=0;i<N;i++){ const a=ang(i), x=cx+(R+14)*Math.cos(a), y=cy+(R+14)*Math.sin(a);
+    g.textAlign=Math.abs(Math.cos(a))<0.3?"center":(Math.cos(a)>0?"left":"right"); g.textBaseline="middle"; g.fillText(labels[i],x,y); }
+  files.forEach((f,fi)=>{ const col=CLIP_COLORS[fi%CLIP_COLORS.length];
+    g.beginPath();
+    for(let i=0;i<N;i++){ const v=f.radarShared[RADAR_KEYS[i]], a=ang(i);
+      const x=cx+R*v*Math.cos(a), y=cy+R*v*Math.sin(a); i?g.lineTo(x,y):g.moveTo(x,y); }
+    g.closePath(); g.strokeStyle=rgba(col,0.95); g.lineWidth=1.4; g.stroke();
+    g.fillStyle=rgba(col,0.10); g.fill();
+  });
+}
+
+function drawProfileCompare(cv){
+  const {g,w,h}=dpiCanvas(cv); g.clearRect(0,0,w,h); g.fillStyle="#000"; g.fillRect(0,0,w,h);
+  const pad=46, {cmx,rmx}=sharedProfile;
+  const sx=v=>pad+(v/(cmx||1))*(w-2*pad-14);
+  const sy=v=>h-pad-(v/(rmx||1))*(h-2*pad);
+  g.strokeStyle="#222"; g.lineWidth=1;
+  g.beginPath(); g.moveTo(pad,pad-18); g.lineTo(pad,h-pad); g.lineTo(w-14,h-pad); g.stroke();
+  g.fillStyle="#666"; g.font=SMALLCAP; g.textAlign="center";
+  g.fillText("SPECTRAL CENTROID", w/2, h-pad+18);
+  g.save(); g.translate(pad-16,h/2); g.rotate(-Math.PI/2); g.fillText("AMPLITUDE",0,0); g.restore();
+  for(let t=0;t<=6;t++){ const fk=cmx*t/6; g.fillStyle="#555"; g.textAlign="center"; g.fillText((fk/1000).toFixed(1)+"k", sx(fk), h-pad+9); }
+  files.forEach((f,fi)=>{ const col=CLIP_COLORS[fi%CLIP_COLORS.length], cen=f.A.F.centroid, rms=f.A.F.rms;
+    g.fillStyle=rgba(col,0.7);
+    for(let i=0;i<cen.length;i++) g.fillRect(sx(cen[i])-1, sy(rms[i])-1, 2, 2);
+  });
+}
+
+function drawCompare(){
+  computeShared();
+  drawManifoldCompare($('cManifold'));
+  drawRadarCompare($('cRadar'));
+  drawProfileCompare($('cProfile'));
+  renderLegend();
+}
+
+function renderLegend(){
+  const box=$('legend'); box.innerHTML='';
+  files.forEach((f,fi)=>{ const col=CLIP_COLORS[fi%CLIP_COLORS.length];
+    const el=document.createElement('div'); el.className='leg';
+    const sw=document.createElement('span'); sw.className='sw'; sw.style.background=rgba(col,1);
+    el.append(sw, document.createTextNode(f.name.replace(/\.[^.]+$/,'')));
+    box.appendChild(el); });
+}
+
+/* ───────────────────────── DEMO SYNTH ───────────────────────── */
+function synthSong(sr){
+  // a short sequence of FM "chirps" with tremolo — birdsong-ish, not a real species
+  const dur=4.2, n=Math.floor(dur*sr), x=new Float32Array(n);
+  const notes=[
+    {t:0.10,len:0.45,f0:2600,f1:4200,trem:34},
+    {t:0.70,len:0.22,f0:3800,f1:3200,trem:0},
+    {t:1.05,len:0.55,f0:1800,f1:5200,trem:48},
+    {t:1.85,len:0.30,f0:4400,f1:2400,trem:60},
+    {t:2.35,len:0.18,f0:3000,f1:3000,trem:0},
+    {t:2.70,len:0.70,f0:2200,f1:6100,trem:22},
+    {t:3.55,len:0.40,f0:5000,f1:2800,trem:40},
+  ];
+  for(const nt of notes){
+    const s=Math.floor(nt.t*sr), L=Math.floor(nt.len*sr);
+    for(let i=0;i<L;i++){
+      const p=i/L;
+      const env=Math.sin(Math.PI*p)**1.3;
+      const f=nt.f0+(nt.f1-nt.f0)*p;
+      const trem=nt.trem? (0.55+0.45*Math.sin(2*Math.PI*nt.trem*i/sr)) : 1;
+      const ph=2*Math.PI*f*i/sr;
+      const idx=s+i; if(idx<n) x[idx]+=0.42*env*trem*(Math.sin(ph)+0.3*Math.sin(2*ph));
+    }
+  }
+  for(let i=0;i<n;i++) x[i]+=(Math.random()-0.5)*0.004; // faint air
+  return {samples:x, sr, name:"demo · synthetic chirp sequence"};
+}
+
+// four deliberately contrasting synthetic "voices" to demonstrate mixed-space compare
+function synthSet(sr){
+  const out=[];
+  const buf=(dur)=>new Float32Array(Math.floor(dur*sr));
+  // 1) bird — high, FM, tremolo
+  out.push({sr,name:"demo bird · high FM chirps",samples:synthSong(sr).samples});
+  // 2) whale — low, slow, sustained moans
+  { const x=buf(4.5);
+    [[0.2,1.4,90,150],[1.9,1.2,160,70],[3.3,1.0,110,200]].forEach(([t,len,f0,f1])=>{
+      const s=t*sr|0, L=len*sr|0;
+      for(let i=0;i<L;i++){ const p=i/L, env=Math.sin(Math.PI*p)**1.2;
+        const f=f0+(f1-f0)*p, ph=2*Math.PI*f*i/sr;
+        if(s+i<x.length) x[s+i]+=0.5*env*(Math.sin(ph)+0.25*Math.sin(2*ph)); } });
+    out.push({sr,name:"demo whale · low sustained moans",samples:x}); }
+  // 3) cricket — narrowband, very high amplitude-modulation
+  { const x=buf(4.0), car=4800;
+    for(let b=0;b<8;b++){ const s=(0.25+b*0.45)*sr|0, L=0.30*sr|0;
+      for(let i=0;i<L;i++){ const p=i/L, env=Math.sin(Math.PI*p);
+        const am=0.5+0.5*Math.sin(2*Math.PI*38*i/sr);
+        if(s+i<x.length) x[s+i]+=0.4*env*am*Math.sin(2*Math.PI*car*i/sr); } }
+    out.push({sr,name:"demo cricket · AM trill",samples:x}); }
+  // 4) rain — broadband filtered noise, low tonality
+  { const x=buf(4.0); let lp=0;
+    for(let i=0;i<x.length;i++){ const wn=(Math.random()*2-1); lp+=0.25*(wn-lp); // one-pole
+      const drip=Math.random()<0.004?(Math.random()*2-1)*0.6:0;
+      x[i]=0.18*lp+0.55*wn*0.25+drip; }
+    out.push({sr,name:"demo rain · broadband noise",samples:x}); }
+  return out;
+}
+
+/* ───────────────────────── APP ───────────────────────── */
+let ctx, files=[], cur=-1, raf=null, srcNode=null, playStart=0, mode='single';
+const $=id=>document.getElementById(id);
+const getCtx=()=>ctx||(ctx=new (window.AudioContext||window.webkitAudioContext)());
+const syncModeBtn=()=>{ $('btnMode').disabled = files.length<2; syncBasisUI(); };
+function redrawCurrent(){ if(cur<0) return; if(mode==='compare') drawCompare(); else draw(+$('time').value); }
+
+/* basis controls + status pill */
+function syncBasisUI(msg){
+  $('btnFreeze').disabled = files.length<1;
+  $('btnFreeze').textContent = frozen ? '❄ Refreeze on loaded clips' : '❄ Freeze basis';
+  $('btnUnfreeze').disabled = !frozen;
+  $('btnExport').disabled = !frozen;
+  const pill=$('basisPill');
+  if(msg){ pill.className='pill err'; pill.textContent=msg; pill.title=''; return; }
+  if(frozen){
+    const n=frozen.refs.length;
+    pill.className='pill frozen';
+    pill.textContent='basis: frozen · '+n+' reference clip'+(n===1?'':'s')+' · fitted '+
+      String(frozen.created||'').replace(/:\d\d(\.\d+)?Z$/,'Z').replace('T',' ');
+    pill.title='References: '+frozen.refs.join(', ');
+  } else {
+    pill.className='pill'; pill.textContent='basis: live — refits as clips change'; pill.title='';
+  }
+}
+function setFrozen(B){
+  frozen=B; files.forEach(f=>{ delete f._fz; });
+  syncBasisUI(); redrawCurrent();
+}
+function exportBasis(){
+  if(!frozen) return;
+  const out=Object.assign({}, frozen, {exported:new Date().toISOString(), exportedBy:BUILD_ID});
+  const blob=new Blob([JSON.stringify(out,null,1)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='amx-basis-'+out.exported.replace(/[-:]/g,'').replace(/\.\d+Z$/,'Z')+'.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+async function importBasis(file){
+  try{
+    if(file.size>2e6) throw new Error("file too large for a basis (>2 MB)");
+    const B=JSON.parse(await file.text());
+    const err=validateBasis(B);
+    if(err) throw new Error(err);
+    setFrozen(B);
+  }catch(e){ syncBasisUI("basis import failed: "+e.message); }
+}
+
+function toMono(buf){
+  const ch=buf.numberOfChannels, len=buf.length, out=new Float32Array(len);
+  for(let c=0;c<ch;c++){ const d=buf.getChannelData(c); for(let i=0;i<len;i++) out[i]+=d[i]/ch; }
+  return out;
+}
+
+async function addDecoded(samples, sr, name){
+  const A=analyze(samples, sr);
+  if(!A){ flashEmpty("Recording too short to analyze — need ≥ ~0.1 s of audio."); return; }
+  files.push({name, samples, sr, A});
+  renderChips(); syncModeBtn(); select(files.length-1);
+}
+
+async function loadFiles(list){
+  const c=getCtx();
+  for(const f of list){
+    try{
+      const ab=await f.arrayBuffer();
+      const buf=await c.decodeAudioData(ab.slice(0));
+      await addDecoded(toMono(buf), buf.sampleRate, f.name);
+    }catch(e){ flashEmpty("Couldn't decode "+f.name+" — try WAV/MP3/FLAC/OGG."); }
+  }
+}
+
+function flashEmpty(msg){ const e=$('stage'); e.textContent=msg; }
+
+function renderChips(){
+  const box=$('files'); box.innerHTML='';
+  files.forEach((f,i)=>{
+    const c=document.createElement('div');
+    c.className='chip'+(i===cur?' on':'');
+    const nm=document.createElement('span'); nm.textContent=f.name.replace(/\.[^.]+$/,'');
+    const x=document.createElement('span'); x.className='x'; x.textContent='✕';
+    c.append(nm, x);
+    c.onclick=e=>{ if(e.target.classList.contains('x')){ remove(i);} else select(i); };
+    box.appendChild(c);
+  });
+}
+function remove(i){ files.splice(i,1); if(cur>=files.length) cur=files.length-1;
+  renderChips(); syncModeBtn();
+  if(!files.length){ reset(); return; }
+  if(mode==='compare' && files.length>=2){ drawCompare(); }
+  else select(Math.max(0,cur)); }
+function reset(){ cur=-1; mode='single'; stopPlay(); $('content').style.display='none';
+  $('legend').className=''; $('btnMode').textContent='▦ Compare (mix)';
+  $('stage').style.display='block'; $('stage').textContent="No recording loaded. Synthesize a demo, or drop a recording."; $('btnPlay').disabled=true; }
+
+function select(i){
+  cur=i; mode='single'; renderChips(); stopPlay();
+  $('stage').style.display='none'; $('content').style.display='block'; $('btnPlay').disabled=false;
+  $('legend').className=''; $('btnMode').textContent='▦ Compare (mix)';
+  document.querySelector('.scrub').style.display='flex';
+  $('specPanel').style.display='block';
+  const f=files[i];
+  $('specimen').textContent=f.name.replace(/\.[^.]+$/,'')+"  ·  "+f.A.nF+" frames · "+(f.sr/1000).toFixed(1)+" kHz";
+  $('time').max=f.A.nF-1; $('time').value=0;
+  draw(0);
+}
+
+function enterCompare(){
+  if(files.length<2) return;
+  mode='compare'; stopPlay();
+  $('stage').style.display='none'; $('content').style.display='block';
+  document.querySelector('.scrub').style.display='none';
+  $('specPanel').style.display='none';
+  $('btnPlay').disabled=true; $('legend').className='open';
+  $('btnMode').textContent='◉ Single clip';
+  $('specimen').textContent="Mixed space  ·  "+files.length+" clips overlaid in a shared projection";
+  drawCompare();
+}
+function toggleMode(){ if(mode==='compare') select(Math.max(0,cur)); else enterCompare(); }
+
+function draw(frame){
+  const f=files[cur], A=f.A; frame=Math.max(0,Math.min(A.nF-1,frame|0));
+  drawManifold($('cManifold'), f, frame);
+  drawSpectrogram($('cSpec'), f, frame);
+  drawRadar($('cRadar'), A, frame);
+  drawProfile($('cProfile'), A, frame);
+  const t=A.F.t[frame], cen=A.F.centroid[frame];
+  $('ro').textContent=t.toFixed(2)+"s · "+(cen/1000).toFixed(2)+"kHz";
+}
+
+/* playback + time sweep */
+function stopPlay(){ if(raf)cancelAnimationFrame(raf); raf=null;
+  if(srcNode){ try{srcNode.stop();}catch(e){} srcNode=null; }
+  $('btnPlay').textContent="▶ Play / sweep"; }
+function play(){
+  if(cur<0) return;
+  if(srcNode){ stopPlay(); return; }
+  const f=files[cur], c=getCtx();
+  const ab=c.createBuffer(1, f.samples.length, f.sr);
+  ab.copyToChannel(f.samples,0);
+  srcNode=c.createBufferSource(); srcNode.buffer=ab; srcNode.connect(c.destination);
+  const dur=f.samples.length/f.sr;
+  playStart=c.currentTime; srcNode.start();
+  $('btnPlay').textContent="■ Stop";
+  srcNode.onended=()=>stopPlay();
+  const step=()=>{
+    if(!srcNode) return;
+    const el=c.currentTime-playStart;
+    const fr=Math.min(f.A.nF-1, Math.floor(el/dur*f.A.nF));
+    $('time').value=fr; draw(fr);
+    if(el<dur) raf=requestAnimationFrame(step); else stopPlay();
+  };
+  raf=requestAnimationFrame(step);
+}
+
+/* wiring */
+$('btnDemo').onclick=()=>{ const c=getCtx(); const d=synthSong(c.sampleRate); addDecoded(d.samples,d.sr,d.name); };
+$('btnSet').onclick=async()=>{ const c=getCtx(); for(const d of synthSet(c.sampleRate)) await addDecoded(d.samples,d.sr,d.name); enterCompare(); };
+$('btnPick').onclick=()=>$('picker').click();
+$('picker').onchange=e=>loadFiles([...e.target.files]);
+$('btnMode').onclick=toggleMode;
+$('btnPlay').onclick=play;
+$('time').oninput=e=>{ if(srcNode) stopPlay(); draw(+e.target.value); };
+$('btnSources').onclick=()=>{ $('sources').classList.toggle('open'); };
+$('btnFreeze').onclick=()=>{ if(files.length) setFrozen(fitBasis(files)); };
+$('btnUnfreeze').onclick=()=>setFrozen(null);
+$('btnExport').onclick=exportBasis;
+$('btnImport').onclick=()=>$('basisPicker').click();
+$('basisPicker').onchange=e=>{ const f=e.target.files[0]; if(f) importBasis(f); e.target.value=''; };
+
+/* linked time: click/drag the spectrogram, or click a manifold point, to seek */
+function seek(frame){ if(cur<0||mode!=='single') return; if(srcNode) stopPlay();
+  const n=files[cur].A.nF; frame=Math.max(0,Math.min(n-1,Math.round(frame)));
+  $('time').value=frame; draw(frame); }
+function canvasXY(cv,e){ const r=cv.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; }
+const cSpec=$('cSpec');
+const specSeek=e=>{ if(!lastSpec) return; const [x]=canvasXY(cSpec,e);
+  seek((x-lastSpec.padL)/lastSpec.pw*(lastSpec.nF-1)); };
+cSpec.addEventListener('pointerdown',e=>{ cSpec.setPointerCapture(e.pointerId); specSeek(e); });
+cSpec.addEventListener('pointermove',e=>{ if(e.buttons&1) specSeek(e); });
+$('cManifold').addEventListener('click',e=>{
+  if(!lastMan||mode!=='single') return;
+  const [x,y]=canvasXY($('cManifold'),e); let best=-1, bd=14*14;
+  lastMan.P.forEach((p,i)=>{ const dx=lastMan.sx(p[0])-x, dy=lastMan.sy(p[1])-y, d=dx*dx+dy*dy;
+    if(d<bd){ bd=d; best=i; } });
+  if(best>=0) seek(best);
+});
+
+const drop=$('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
+drop.addEventListener('drop',e=>loadFiles([...e.dataTransfer.files]));
+window.addEventListener('resize',redrawCurrent);
+syncBasisUI();
+
+/* ───── in-app source directory ───── */
+const SOURCES=[
+  ["Birds",[
+    ["Xeno-canto","https://xeno-canto.org","1M+ CC recordings, direct downloads — also frogs, bats, crickets. Best for import."],
+    ["Macaulay Library (Cornell)","https://www.macaulaylibrary.org","Largest archive; birds + mammals, reptiles, amphibians, insects, fish. Streaming; downloads license-gated."],
+  ]],
+  ["Whales & marine mammals",[
+    ["Watkins Marine Mammal DB (WHOI)","https://cis.whoi.edu/science/B/whalesounds/index.cfm","~2,000 clips, 60+ species. 'Best of Cuts' are cleanest. Free for personal/academic."],
+    ["NOAA SanctSound","https://sanctsound.ioos.us/","Sanctuary soundscapes — whale song, fish calls, snapping shrimp."],
+  ]],
+  ["Ocean / earth physical (ice, quakes, vents)",[
+    ["NOAA PMEL Acoustics","https://www.pmel.noaa.gov/acoustics/multimedia.html","Icequakes ('The Bloop'), undersea earthquakes, vents. Very low frequency."],
+  ]],
+  ["Other animals (frogs, insects, mammals)",[
+    ["Tierstimmenarchiv (Berlin)","https://suche.tierstimmenarchiv.de/?language=english","~120k recordings; strong on frogs, crickets, mammals, reptiles."],
+  ]],
+  ["Weather / rain / ambient / SFX",[
+    ["BBC Sound Effects","https://sound-effects.bbcrewind.co.uk","33k+ WAVs — rain, thunder, wind, waterfalls. Free for personal/edu/research (RemArc)."],
+    ["Freesound","https://freesound.org","Huge CC community library — deepest well for rain/storm/wind textures."],
+  ]],
+];
+(function renderSources(){
+  const box=$('sources');
+  let html='';
+  for(const [cat,items] of SOURCES){
+    html+=`<div class="src-cat">${cat}</div>`;
+    for(const [name,url,note] of items)
+      html+=`<span class="src-item"><a href="${url}" target="_blank" rel="noopener">${name} ↗</a><br><span class="note">${note}</span></span>`;
+  }
+  html+=`<div class="src-foot">Best manifolds come from clean, isolated single-source clips. Trim long files. Most sources are free for personal/research use; check terms before commercial reuse.</div>`;
+  box.innerHTML=html;
+})();
+</script>
